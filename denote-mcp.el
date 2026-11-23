@@ -4,7 +4,7 @@
 
 ;; Author: Gregg Roth
 ;; Keywords: convenience, files, matching, outlines, hypermedia
-;; Package-Requires: ((emacs "29.1") (denote "3.0.0") (mcp-server-lib "0.2.0"))
+;; Package-Requires: ((emacs "29.1") (denote "4.0.0") (mcp-server-lib "0.4.0"))
 ;; Version: 0.1.0
 ;; URL: https://github.com/greggroth/denote-mcp
 
@@ -138,7 +138,7 @@ to permit writes when this is t.  Useful for sandboxed sessions."
 ;;;; Tool wrappers
 
 (defun denote-mcp--tool-list-notes
-    (title_regex keywords signature date_from date_to include_journal limit)
+    (&optional title_regex keywords signature date_from date_to include_journal limit)
   "List denote notes with optional filters.
 
 Args: TITLE_REGEX, KEYWORDS, SIGNATURE, DATE_FROM, DATE_TO,
@@ -167,7 +167,7 @@ MCP Parameters:
      :limit limit)))
 
 (defun denote-mcp--tool-search-notes-content
-    (query regex limit context_lines)
+    (query &optional regex limit context_lines)
   "Search note bodies for QUERY.
 
 Args: REGEX, LIMIT, CONTEXT_LINES.
@@ -192,7 +192,7 @@ MCP Parameters:
   (denote-mcp--respond
     (denote-mcp-tools-get-note id)))
 
-(defun denote-mcp--tool-format-link (id description)
+(defun denote-mcp--tool-format-link (id &optional description)
   "Return a denote link for ID.
 
 Args: DESCRIPTION.
@@ -203,7 +203,7 @@ MCP Parameters:
   (denote-mcp--respond
     (denote-mcp-tools-format-link id description)))
 
-(defun denote-mcp--tool-list-keywords (min_count prefix)
+(defun denote-mcp--tool-list-keywords (&optional min_count prefix)
   "List all denote keywords with usage counts.
 
 Args: MIN_COUNT, PREFIX.
@@ -216,7 +216,7 @@ MCP Parameters:
      :min-count min_count
      :prefix prefix)))
 
-(defun denote-mcp--tool-find-backlinks (id limit)
+(defun denote-mcp--tool-find-backlinks (id &optional limit)
   "Return notes that reference ID.
 
 Args: LIMIT.
@@ -230,7 +230,7 @@ MCP Parameters:
      :limit limit)))
 
 (defun denote-mcp--tool-create-note
-    (title keywords signature file_type body subdirectory date)
+    (title &optional keywords signature file_type body subdirectory date)
   "Create a new denote note.
 
 Args: TITLE, KEYWORDS, SIGNATURE, FILE_TYPE, BODY, SUBDIRECTORY,
@@ -255,7 +255,7 @@ MCP Parameters:
      :subdirectory subdirectory
      :date date)))
 
-(defun denote-mcp--tool-append-to-note (id content add_newline)
+(defun denote-mcp--tool-append-to-note (id content &optional add_newline)
   "Append CONTENT to the body of the note with ID.
 
 MCP Parameters:
@@ -272,7 +272,7 @@ MCP Parameters:
                       'unset
                     add_newline))))
 
-(defun denote-mcp--tool-rename-note (id title keywords signature)
+(defun denote-mcp--tool-rename-note (id &optional title keywords signature)
   "Rename a denote note with ID while preserving its identifier.
 
 Args: TITLE, KEYWORDS, SIGNATURE.
@@ -289,7 +289,7 @@ MCP Parameters:
      :keywords keywords
      :signature signature)))
 
-(defun denote-mcp--tool-create-journal-entry (date)
+(defun denote-mcp--tool-create-journal-entry (&optional date)
   "Create or open a denote-journal entry.
 
 Args: DATE.
@@ -327,7 +327,7 @@ MCP Parameters:
             (file (denote-mcp-tools--file-by-id id)))
        (denote-mcp--json-encode (denote-mcp-tools--metadata file))))))
 
-(defun denote-mcp--resource-list (_params)
+(defun denote-mcp--resource-list ()
   "Resource handler returning a JSON listing of all notes."
   (denote-mcp--with-error-handling
    (lambda ()
@@ -404,19 +404,15 @@ MCP Parameters:
      :description "Create (or open) the denote-journal entry for a date.\n\nReturns the note's metadata plus a `created` boolean."))
   "Static registry of tools that denote-mcp can register.")
 
-(defun denote-mcp--register-tool (entry)
-  "Register one tool described by ENTRY."
+(defun denote-mcp--tool-spec (entry)
+  "Build a bundled tool specification from ENTRY."
   (let ((handler (plist-get (cdr entry) :handler))
         (id (plist-get (cdr entry) :id))
         (description (plist-get (cdr entry) :description))
         (read-only (plist-get (cdr entry) :read-only)))
-    (apply #'mcp-server-lib-register-tool handler
-           (append
-            (list :id id
-                  :description description
-                  :server-id denote-mcp--server-id)
+    (append (list handler :id id :description description)
             (when (plist-member (cdr entry) :read-only)
-              (list :read-only read-only))))))
+              (list :read-only read-only)))))
 
 (defconst denote-mcp--resource-registry
   '(("denote://id/{id}"
@@ -441,27 +437,33 @@ MCP Parameters:
      :mime-type "text/plain"))
   "Static registry of MCP resources to register.")
 
-(defun denote-mcp--register-resource (entry)
-  "Register one resource described by ENTRY."
+(defun denote-mcp--resource-spec (entry)
+  "Build a bundled resource specification from ENTRY."
   (let ((uri (car entry))
         (props (cdr entry)))
-    (apply #'mcp-server-lib-register-resource
-           uri (plist-get props :handler)
-           (append
-            (list :name (plist-get props :name)
-                  :description (plist-get props :description)
-                  :mime-type (plist-get props :mime-type)
-                  :server-id denote-mcp--server-id)))))
+    (list uri (plist-get props :handler)
+          :name (plist-get props :name)
+          :description (plist-get props :description)
+          :mime-type (plist-get props :mime-type))))
+
+(defvar denote-mcp--enabled nil
+  "Non-nil when this package owns a server registration.")
 
 ;;;###autoload
 (defun denote-mcp-enable ()
   "Register denote-mcp tools and resources with mcp-server-lib."
   (interactive)
-  (dolist (entry denote-mcp--tool-registry)
-    (when (memq (car entry) denote-mcp-enabled-tools)
-      (denote-mcp--register-tool entry)))
-  (dolist (entry denote-mcp--resource-registry)
-    (denote-mcp--register-resource entry))
+  (denote-mcp-disable)
+  (mcp-server-lib-register-server
+   :id denote-mcp--server-id
+   :name "denote-mcp"
+   :version "0.1.0"
+   :tools (mapcar #'denote-mcp--tool-spec
+                  (cl-remove-if-not
+                   (lambda (entry) (memq (car entry) denote-mcp-enabled-tools))
+                   denote-mcp--tool-registry))
+   :resources (mapcar #'denote-mcp--resource-spec denote-mcp--resource-registry))
+  (setq denote-mcp--enabled t)
   (message "denote-mcp: registered %d tools and %d resources"
            (length (cl-remove-if-not
                     (lambda (e) (memq (car e) denote-mcp-enabled-tools))
@@ -472,11 +474,9 @@ MCP Parameters:
 (defun denote-mcp-disable ()
   "Unregister denote-mcp tools and resources."
   (interactive)
-  (dolist (entry denote-mcp--tool-registry)
-    (mcp-server-lib-unregister-tool
-     (plist-get (cdr entry) :id) denote-mcp--server-id))
-  (dolist (entry denote-mcp--resource-registry)
-    (mcp-server-lib-unregister-resource (car entry) denote-mcp--server-id)))
+  (when denote-mcp--enabled
+    (mcp-server-lib-unregister-server denote-mcp--server-id)
+    (setq denote-mcp--enabled nil)))
 
 (provide 'denote-mcp)
 ;;; denote-mcp.el ends here

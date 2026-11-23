@@ -30,7 +30,8 @@ functions for all of this, so it stays correct as Denote evolves.
 * Installation
 
 Requires Emacs 29.1+, [[https://github.com/protesilaos/denote][denote]] 4.0+,
-and [[https://github.com/laurynas-biveinis/mcp-server-lib.el][mcp-server-lib]] 0.2+.
+and [[https://github.com/laurynas-biveinis/mcp-server-lib.el][mcp-server-lib]] 0.4.0+.
+Older versions of =mcp-server-lib= are not supported.
 
 ** With ~package-vc-install~
 
@@ -51,17 +52,29 @@ and [[https://github.com/laurynas-biveinis/mcp-server-lib.el][mcp-server-lib]] 0
 
 * MCP client setup
 
-=denote-mcp= follows =mcp-server-lib='s standard pattern: a small Emacs script
-that loads the package, calls =denote-mcp-enable=, and serves over stdio.
+=denote-mcp= uses =mcp-server-lib='s stdio bridge to a running Emacs daemon.
+Load the package in your Emacs configuration and start the MCP transport:
+
+#+begin_src emacs-lisp
+(require 'denote-mcp)
+(require 'mcp-server-lib-commands)
+(mcp-server-lib-start)
+#+end_src
+
+Start Emacs with =emacs --daemon= (or use =M-x server-start= in your running
+Emacs), then run =M-x mcp-server-lib-install= to install the bridge script.
+Configure your client as follows, replacing the script path with its absolute
+location on your machine (the default is =~/.emacs.d/emacs-mcp-stdio.sh=):
 
 #+begin_src json
 {
   "mcpServers": {
     "denote": {
-      "command": "emacs",
+      "command": "/home/YOUR_USER/.emacs.d/emacs-mcp-stdio.sh",
       "args": [
-        "--batch",
-        "--eval", "(progn (require 'package) (package-initialize) (require 'denote-mcp) (denote-mcp-enable) (mcp-server-lib-stdio-loop))"
+        "--init-function=denote-mcp-enable",
+        "--stop-function=denote-mcp-disable",
+        "--server-id=denote-mcp"
       ]
     }
   }
@@ -70,6 +83,25 @@ that loads the package, calls =denote-mcp-enable=, and serves over stdio.
 
 If you keep your Denote directory non-default, set =denote-directory= before
 calling =denote-mcp-enable=.
+For a named Emacs daemon, add =--socket=NAME= to the bridge arguments.
+The explicit =--server-id=denote-mcp= is required to route requests to this
+package rather than another MCP server in the same Emacs instance.
+This configuration assumes one connected client: its shutdown unregisters
+the Denote server.  If several clients share the same Emacs instance, omit
+=--stop-function=denote-mcp-disable= from all their configurations and run
+=M-x denote-mcp-disable= manually when none of them needs it anymore.
+
+** Upgrading from mcp-server-lib 0.2
+
+Update =mcp-server-lib= to 0.4.0 or later, restart Emacs, run
+=M-x mcp-server-lib-install= again, and replace the old batch Emacs client
+configuration with the bridge configuration above.  The old
+=mcp-server-lib-stdio-loop= setup is no longer supported.
+
+Registration now uses =mcp-server-lib-register-server= and
+=mcp-server-lib-unregister-server=.  Re-enabling refreshes the selected tools
+without accumulating registration references; disabling removes this
+package's registration without stopping other MCP servers.
 
 * Configuration
 

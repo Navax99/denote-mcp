@@ -19,8 +19,16 @@
 (require 'denote)
 (require 'denote-mcp)
 (require 'denote-mcp-tools)
+(require 'mcp-server-lib-commands)
 
 (defvar denote-mcp-tests--dir nil)
+
+(defun denote-mcp-tests--request (request server-id)
+  "Process REQUEST for SERVER-ID with the transport running."
+  (mcp-server-lib-start)
+  (unwind-protect
+      (mcp-server-lib-process-jsonrpc-parsed request server-id)
+    (mcp-server-lib-stop)))
 
 (defmacro denote-mcp-tests--with-dir (&rest body)
   "Run BODY inside a fresh temporary `denote-directory'."
@@ -239,7 +247,7 @@
   (denote-mcp-tests--with-dir
     (denote-mcp-tools-create-note :title "One")
     (denote-mcp-tools-create-note :title "Two")
-    (let* ((json (denote-mcp--resource-list nil))
+    (let* ((json (denote-mcp--resource-list))
            (data (denote-mcp-tests--decode json)))
       (should (= (length data) 2)))))
 
@@ -249,9 +257,63 @@
   (denote-mcp-tests--with-dir
     (denote-mcp-enable)
     (unwind-protect
-        ;; If registration succeeded, re-enabling should also work
-        ;; (mcp-server-lib will overwrite).
-        (denote-mcp-enable)
+        (progn
+          (denote-mcp-enable)
+          (should (mcp-server-lib-server-registered-p "denote-mcp")))
+      (denote-mcp-disable))
+    (should-not (mcp-server-lib-server-registered-p "denote-mcp"))
+    (let* ((response (denote-mcp-tests--request
+                      (mcp-server-lib-create-tools-list-request) "denote-mcp"))
+           (tools (alist-get 'tools (alist-get 'result response))))
+      (should (= (length tools) 0)))))
+
+(ert-deftest denote-mcp-tests-protocol-resource-list ()
+  (denote-mcp-tests--with-dir
+    (denote-mcp-tools-create-note :title "Protocol note")
+    (denote-mcp-enable)
+    (unwind-protect
+        (let* ((response (denote-mcp-tests--request
+                          (mcp-server-lib-create-resources-read-request
+                           "denote-list://all") "denote-mcp"))
+               (contents (alist-get 'contents (alist-get 'result response)))
+               (notes (denote-mcp-tests--decode
+                       (alist-get 'text (aref contents 0)))))
+          (should-not (alist-get 'error response))
+          (should (equal (alist-get 'title (car notes)) "Protocol note")))
+      (denote-mcp-disable))))
+
+(ert-deftest denote-mcp-tests-enable-refresh-preserves-other-server ()
+  (let ((denote-mcp-enabled-tools '(get-note)))
+    (mcp-server-lib-register-server :id "denote-mcp-tests-other")
+    (unwind-protect
+        (progn
+          (denote-mcp-enable)
+          (setq denote-mcp-enabled-tools '(list-notes))
+          (denote-mcp-enable)
+          (let* ((response (denote-mcp-tests--request
+                            (mcp-server-lib-create-tools-list-request)
+                            "denote-mcp"))
+                 (tools (alist-get 'tools (alist-get 'result response))))
+            (should (= (length tools) 1))
+            (should (equal (alist-get 'name (aref tools 0))
+                           "denote-list-notes")))
+          (denote-mcp-disable)
+          (denote-mcp-disable)
+          (should (mcp-server-lib-server-registered-p "denote-mcp-tests-other")))
+      (denote-mcp-disable)
+      (mcp-server-lib-unregister-server "denote-mcp-tests-other"))))
+
+(ert-deftest denote-mcp-tests-protocol-optional-tool-arguments ()
+  (denote-mcp-tests--with-dir
+    (denote-mcp-enable)
+    (unwind-protect
+        (let* ((response (denote-mcp-tests--request
+                          (mcp-server-lib-create-tools-call-request
+                           "denote-list-notes" 1 nil) "denote-mcp"))
+               (result (alist-get 'result response)))
+          (should-not (alist-get 'error response))
+          (should (equal (alist-get 'text (aref (alist-get 'content result) 0))
+                         "[]")))
       (denote-mcp-disable))))
 
 (provide 'denote-mcp-tests)

@@ -10,7 +10,7 @@
   "MCP server for Denote."
   '((emacs          "29.1")
     (denote         "4.0.0")
-    (mcp-server-lib "0.2.0"))
+    (mcp-server-lib "0.4.0"))
   :url "https://github.com/greggroth/denote-mcp"
   :keywords '("convenience" "files" "matching" "outlines" "hypermedia"))
 
